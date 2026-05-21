@@ -273,18 +273,13 @@
       });
     }
 
-    function isBookingWidgetVisible() {
-      const rect = widget.getBoundingClientRect();
-      const style = window.getComputedStyle(widget);
+function isBookingWidgetVisible() {
+  const modal = widget.closest(".section.modal");
 
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        style.opacity !== "0"
-      );
-    }
+  if (!modal) return false;
+
+  return modal.classList.contains("active");
+}
 
     function setupBookingWidgetOpenTracking() {
       let wasVisible = isBookingWidgetVisible();
