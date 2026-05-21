@@ -263,6 +263,57 @@
       fallback: widget.querySelector('[data-booking-fallback="true"]')
     };
 
+        function pushBookingAnalyticsEvent(eventName) {
+      window.dataLayer = window.dataLayer || [];
+
+      window.dataLayer.push({
+        event: eventName,
+        page_location: window.location.href,
+        page_path: window.location.pathname
+      });
+    }
+
+    function isBookingWidgetVisible() {
+      const rect = widget.getBoundingClientRect();
+      const style = window.getComputedStyle(widget);
+
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0"
+      );
+    }
+
+    function setupBookingWidgetOpenTracking() {
+      let wasVisible = isBookingWidgetVisible();
+
+      const checkVisibility = function () {
+        const isVisible = isBookingWidgetVisible();
+
+        if (isVisible && !wasVisible) {
+          pushBookingAnalyticsEvent("booking_widget_open");
+        }
+
+        wasVisible = isVisible;
+      };
+
+      const observer = new MutationObserver(function () {
+        window.requestAnimationFrame(checkVisibility);
+      });
+
+      observer.observe(document.body, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        attributeFilter: ["class", "style", "aria-hidden"]
+      });
+
+      window.addEventListener("resize", checkVisibility);
+      window.setTimeout(checkVisibility, 500);
+    }
+
     function injectCursorStyles() {
       if (document.getElementById("twiliner-booking-widget-cursor-style")) return;
 
@@ -1875,6 +1926,8 @@
 
       if (!url) return;
 
+            pushBookingAnalyticsEvent("booking_submit_click");
+
       try {
         if (CONFIG.openInNewTab) {
           window.open(url, "_blank", "noopener");
@@ -2092,6 +2145,7 @@
       bindEvents();
       renderPassengers();
       renderTripType();
+      setupBookingWidgetOpenTracking();
 
       window.TwilinerBookingWidgetDebug = {
         config: CONFIG,
