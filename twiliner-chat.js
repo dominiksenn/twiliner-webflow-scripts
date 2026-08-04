@@ -36,6 +36,7 @@ createChat({
   let currentOpenStartedAt = null;
   let currentOpenStartMessageCount = 0;
   let currentOpenQuickDismissTracked = false;
+  let isProgrammaticChatToggle = false;
 
   const isMobile = () =>
     window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
@@ -162,7 +163,13 @@ createChat({
 
     if (toggle) {
       pendingChatTrigger = trigger;
+      isProgrammaticChatToggle = true;
+
       toggle.click();
+
+      window.setTimeout(() => {
+        isProgrammaticChatToggle = false;
+      }, 0);
 
       window.setTimeout(updateChatState, 50);
       window.setTimeout(updateChatState, 200);
@@ -185,7 +192,13 @@ createChat({
       const toggle = getChatToggle();
 
       if (toggle) {
+        isProgrammaticChatToggle = true;
+
         toggle.click();
+
+        window.setTimeout(() => {
+          isProgrammaticChatToggle = false;
+        }, 0);
       }
     }
 
@@ -301,7 +314,8 @@ createChat({
     if (currentOpenQuickDismissTracked) return;
 
     const openDurationMs = Date.now() - currentOpenStartedAt;
-    const messagesDuringOpen = getUserMessageCount() - currentOpenStartMessageCount;
+    const messagesDuringOpen =
+      getUserMessageCount() - currentOpenStartMessageCount;
     const hadMessage = messagesDuringOpen > 0;
 
     if (openDurationMs <= QUICK_DISMISS_THRESHOLD_MS && !hadMessage) {
@@ -391,7 +405,10 @@ createChat({
       }
 
       if (event.target.closest('.chat-window-toggle')) {
-        pendingChatTrigger = 'floating_button';
+        if (!isProgrammaticChatToggle && !pendingChatTrigger) {
+          pendingChatTrigger = 'floating_button';
+        }
+
         window.setTimeout(scheduleUpdate, 50);
         window.setTimeout(scheduleUpdate, 200);
       }
