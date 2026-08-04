@@ -24,12 +24,18 @@ createChat({
   const CHAT_OPEN_HASH = '#twiliner-chat-open';
   const LEGACY_BREVO_HASH = '#brevoConversationsExpanded';
   const AUTO_OPEN_STORAGE_KEY = 'twiliner_chat_auto_opened_50';
+  const QUICK_DISMISS_THRESHOLD_MS = 5000;
 
   let savedScrollY = 0;
   let updateScheduled = false;
   let lastKnownOpenState = false;
   let trackedUserMessageCount = 0;
+
   let pendingChatTrigger = null;
+  let currentOpenTrigger = null;
+  let currentOpenStartedAt = null;
+  let currentOpenStartMessageCount = 0;
+  let currentOpenQuickDismissTracked = false;
 
   const isMobile = () =>
     window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
@@ -243,19 +249,19 @@ createChat({
 
     markAutoOpenAsDone();
 
-    pushChatEvent('twiliner_chat_auto_open_50', {
-      chat_trigger: 'scroll_50_percent'
-    });
-
     openChat('scroll_50_percent');
   }
 
-  function trackUserMessages() {
+  function getUserMessageCount() {
     const userMessages = document.querySelectorAll(
       '.n8n-chat .chat-message-from-user, .chat-message-from-user'
     );
 
-    const currentCount = userMessages.length;
+    return userMessages.length;
+  }
+
+  function trackUserMessages() {
+    const currentCount = getUserMessageCount();
 
     if (currentCount > trackedUserMessageCount) {
       const newMessages = currentCount - trackedUserMessageCount;
@@ -268,6 +274,54 @@ createChat({
 
       trackedUserMessageCount = currentCount;
     }
+  }
+
+  function trackChatOpen(trigger) {
+    currentOpenTrigger = trigger;
+    currentOpenStartedAt = Date.now();
+    currentOpenStartMessageCount = getUserMessageCount();
+    currentOpenQuickDismissTracked = false;
+
+    if (trigger === 'scroll_50_percent') {
+      pushChatEvent('twiliner_chat_open_automatic_50', {
+        chat_trigger: trigger
+      });
+
+      return;
+    }
+
+    pushChatEvent('twiliner_chat_open_manual', {
+      chat_trigger: trigger
+    });
+  }
+
+  function trackQuickDismissIfNeeded(closeTrigger) {
+    if (currentOpenTrigger !== 'scroll_50_percent') return;
+    if (!currentOpenStartedAt) return;
+    if (currentOpenQuickDismissTracked) return;
+
+    const openDurationMs = Date.now() - currentOpenStartedAt;
+    const messagesDuringOpen = getUserMessageCount() - currentOpenStartMessageCount;
+    const hadMessage = messagesDuringOpen > 0;
+
+    if (openDurationMs <= QUICK_DISMISS_THRESHOLD_MS && !hadMessage) {
+      currentOpenQuickDismissTracked = true;
+
+      pushChatEvent('twiliner_chat_auto_open_quick_dismiss', {
+        chat_trigger: currentOpenTrigger,
+        chat_close_trigger: closeTrigger,
+        chat_open_duration_seconds: Math.round(openDurationMs / 1000),
+        chat_had_message: false,
+        chat_messages_during_open: 0
+      });
+    }
+  }
+
+  function resetCurrentOpenTracking() {
+    currentOpenTrigger = null;
+    currentOpenStartedAt = null;
+    currentOpenStartMessageCount = 0;
+    currentOpenQuickDismissTracked = false;
   }
 
   function updateChatState() {
@@ -292,14 +346,13 @@ createChat({
     }
 
     if (open !== lastKnownOpenState) {
+      const trigger = pendingChatTrigger || 'native_toggle_or_widget';
+
       if (open) {
-        pushChatEvent('twiliner_chat_open', {
-          chat_trigger: pendingChatTrigger || 'native_toggle_or_widget'
-        });
+        trackChatOpen(trigger);
       } else {
-        pushChatEvent('twiliner_chat_close', {
-          chat_trigger: pendingChatTrigger || 'native_toggle_or_widget'
-        });
+        trackQuickDismissIfNeeded(trigger);
+        resetCurrentOpenTracking();
       }
 
       lastKnownOpenState = open;
@@ -337,10 +390,14 @@ createChat({
         return;
       }
 
-      if (
-        event.target.closest('.chat-window-toggle') ||
-        event.target.closest('.chat-close-button')
-      ) {
+      if (event.target.closest('.chat-window-toggle')) {
+        pendingChatTrigger = 'floating_button';
+        window.setTimeout(scheduleUpdate, 50);
+        window.setTimeout(scheduleUpdate, 200);
+      }
+
+      if (event.target.closest('.chat-close-button')) {
+        pendingChatTrigger = 'native_close_button';
         window.setTimeout(scheduleUpdate, 50);
         window.setTimeout(scheduleUpdate, 200);
       }
