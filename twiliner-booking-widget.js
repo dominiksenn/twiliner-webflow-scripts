@@ -1285,31 +1285,33 @@ function isBookingWidgetVisible() {
         const prices = new Map();
         const cheapDates = new Set();
 
-        if (Array.isArray(payload)) {
-          payload.forEach(function (item) {
-            if (!item || !item.date || !item.best_offer) return;
+if (Array.isArray(payload)) {
+  payload.forEach(function (item) {
+    if (!item || !item.date) return;
 
-            const price = item.best_offer.price;
+    if (isReturn && state.selectedDepartureDate) {
+      const returnDate = parseIsoDate(item.date);
+      const departureDate = parseIsoDate(state.selectedDepartureDate);
 
-            if (price === null || price === undefined) return;
+      if (returnDate <= departureDate) {
+        return;
+      }
+    }
 
-            if (isReturn && state.selectedDepartureDate) {
-              const returnDate = parseIsoDate(item.date);
-              const departureDate = parseIsoDate(state.selectedDepartureDate);
+    dates.add(item.date);
 
-              if (returnDate <= departureDate) {
-                return;
-              }
-            }
+    const bestOffer = item.best_offer || null;
+    const price = bestOffer ? bestOffer.price : null;
 
-            dates.add(item.date);
-            prices.set(item.date, formatPriceForCalendar(price));
+    if (price !== null && price !== undefined) {
+      prices.set(item.date, formatPriceForCalendar(price));
+    }
 
-            if (item.best_offer.cheap) {
-              cheapDates.add(item.date);
-            }
-          });
-        }
+    if (bestOffer && bestOffer.cheap) {
+      cheapDates.add(item.date);
+    }
+  });
+}
 
         const firstAvailableDate = Array.from(dates).sort()[0];
 
