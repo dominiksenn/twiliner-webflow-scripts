@@ -814,24 +814,135 @@ function isBookingWidgetVisible() {
     }
 
     /*
-     * Geöffnete Liste / Kalender im scrollbaren Modal automatisch ganz sichtbar machen,
-     * damit niemand merken muss, dass man scrollen kann.
+     * Scroll-Modus des Booking-Modals:
+     * - Passt das Formular ins Modal (Desktop), bleibt das Modal ohne Scroll und
+     *   Listen/Kalender duerfen ueber den Modalrand hinausragen -> keine Spruenge.
+     * - Passt es nicht (z. B. Windows mit Zoom) oder auf Mobile, scrollt nur der
+     *   Inhalt im Modal. Geoeffnete Panels werden dann sanft ins Bild gescrollt,
+     *   beim Schliessen bleibt die Scrollposition bestehen.
+     */
+    function getBookingModalWrapper() {
+      return widget.closest('[data-booking-modal="true"]');
+    }
+
+    function isBookingScrollMode() {
+      const wrapper = getBookingModalWrapper();
+      return Boolean(wrapper && wrapper.classList.contains("is-booking-scroll"));
+    }
+
+    function injectScrollModeStyles() {
+      if (document.getElementById("twiliner-booking-scroll-mode-style")) return;
+
+      const style = document.createElement("style");
+      style.id = "twiliner-booking-scroll-mode-style";
+      style.textContent = `
+        [data-booking-modal="true"] .modal-content,
+        [data-booking-modal="true"] .modal-inner {
+          overflow: visible;
+        }
+
+        [data-booking-modal="true"].is-booking-scroll .modal-content {
+          overflow: hidden;
+        }
+
+        [data-booking-modal="true"].is-booking-scroll .modal-inner {
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    function updateBookingScrollMode() {
+      const wrapper = getBookingModalWrapper();
+      if (!wrapper) return;
+
+      // Waehrend ein Panel offen ist nicht neu messen (Panel vergroessert den Inhalt)
+      if (state.openPanel) return;
+
+      const isMobile = window.matchMedia("(max-width: 767px)").matches;
+      const overflows = widget.scrollHeight > widget.clientHeight + 1;
+      const needsScroll = isMobile || overflows;
+
+      wrapper.classList.toggle("is-booking-scroll", needsScroll);
+
+      if (!needsScroll) {
+        widget.scrollTop = 0;
+      }
+    }
+
+    function setupBookingScrollMode() {
+      if (!getBookingModalWrapper()) return;
+
+      injectScrollModeStyles();
+
+      let frame = null;
+      const schedule = function () {
+        if (frame) window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(function () {
+          frame = null;
+          updateBookingScrollMode();
+        });
+      };
+
+      window.addEventListener("resize", schedule);
+
+      if (window.ResizeObserver) {
+        const observer = new ResizeObserver(schedule);
+        observer.observe(widget);
+        Array.from(widget.children).forEach(function (child) {
+          observer.observe(child);
+        });
+      }
+
+      schedule();
+    }
+
+    function scrollWidgetTo(top) {
+      if (typeof widget.scrollTo === "function") {
+        widget.scrollTo({ top: top, behavior: "smooth" });
+      } else {
+        widget.scrollTop = top;
+      }
+    }
+
+    /*
+     * Geoeffnete Liste / Kalender im scrollbaren Modal automatisch ganz sichtbar machen.
+     * Scrollt nur den Modal-Inhalt (nie die Seite), damit nichts springt.
      */
     function scrollPanelIntoView(panel) {
+      if (!isBookingScrollMode()) return;
+
       window.setTimeout(function () {
         if (state.openPanel !== panel || panel.style.display === "none") return;
 
         const target = panel.querySelector("[data-booking-calendar]") || panel;
-        if (typeof target.scrollIntoView !== "function") return;
+        const targetRect = target.getBoundingClientRect();
+        const containerRect = widget.getBoundingClientRect();
+        const margin = 16;
 
-        target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        let delta = 0;
+
+        if (targetRect.bottom > containerRect.bottom - margin) {
+          delta = targetRect.bottom - containerRect.bottom + margin;
+        }
+
+        if (targetRect.top - delta < containerRect.top + margin) {
+          delta = targetRect.top - containerRect.top - margin;
+        }
+
+        if (Math.abs(delta) < 1) return;
+
+        scrollWidgetTo(widget.scrollTop + delta);
       }, 80);
     }
 
     function closePanel(panel, instant) {
       if (!panel) return;
 
-      if (state.openPanel === panel) {
+      const wasOpenPanel = state.openPanel === panel;
+
+      if (wasOpenPanel) {
         state.openPanel = null;
       }
 
@@ -843,6 +954,20 @@ function isBookingWidgetVisible() {
         return;
       }
 
+      // Scrollposition bleibt bestehen. Nur wenn der Inhalt nach dem Schliessen
+      // kuerzer ist als die aktuelle Position, sanft bis ans neue Ende scrollen,
+      // statt hart zu springen.
+      if (wasOpenPanel && isBookingScrollMode()) {
+        const previousDisplay = panel.style.display;
+        panel.style.display = "none";
+        const maxScrollAfterClose = Math.max(0, widget.scrollHeight - widget.clientHeight);
+        panel.style.display = previousDisplay;
+
+        if (widget.scrollTop > maxScrollAfterClose) {
+          scrollWidgetTo(maxScrollAfterClose);
+        }
+      }
+
       panel.style.opacity = "0";
       panel.style.transform = "translateY(0.5rem)";
       panel.style.pointerEvents = "none";
@@ -850,6 +975,7 @@ function isBookingWidgetVisible() {
       window.setTimeout(function () {
         if (state.openPanel !== panel) {
           panel.style.display = "none";
+          updateBookingScrollMode();
         }
       }, CONFIG.panelTransitionMs);
     }
@@ -2198,6 +2324,7 @@ if (Array.isArray(payload)) {
     function init() {
       captureUrlParamsForLater();
       injectCursorStyles();
+      setupBookingScrollMode();
 
       preparePanel(els.originDropdown);
       preparePanel(els.destinationDropdown);
