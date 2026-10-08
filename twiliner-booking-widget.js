@@ -601,6 +601,70 @@ function isBookingWidgetVisible() {
       });
     }
 
+    /*
+     * Buchbarkeit:
+     * Ein Datum gilt nur als buchbar, wenn mindestens ein Angebot einen Preis hat.
+     * Daten ohne Preis zeigt Turnit als "not available" an.
+     */
+    function getBookableOffer(item) {
+      if (!item) return null;
+
+      const offers = [
+        item.best_offer,
+        item.best_offer_with_bed,
+        item.best_offer_private,
+        item.best_offer_with_private_bed
+      ];
+
+      for (let i = 0; i < offers.length; i += 1) {
+        const offer = offers[i];
+        if (offer && offer.price !== null && offer.price !== undefined) {
+          return offer;
+        }
+      }
+
+      return null;
+    }
+
+    const routeBookableCache = new Map();
+
+    async function isRouteBookable(departureId, arrivalId) {
+      const cacheKey = departureId + "|" + arrivalId;
+      if (routeBookableCache.has(cacheKey)) return routeBookableCache.get(cacheKey);
+
+      try {
+        const payload = await apiGet("get-connection-dates", {
+          place_departure_id: departureId,
+          place_arrival_id: arrivalId,
+          operator_id: CONFIG.operatorId,
+          currency: CONFIG.currency
+        }, "route-bookable-check");
+
+        const isBookable = Array.isArray(payload) && payload.some(function (item) {
+          return Boolean(getBookableOffer(item));
+        });
+
+        routeBookableCache.set(cacheKey, isBookable);
+        return isBookable;
+      } catch (error) {
+        // Im Zweifel Route anzeigen, damit ein API-Fehler keine Routen versteckt.
+        console.warn("Twiliner route bookable check failed:", error);
+        return true;
+      }
+    }
+
+    async function filterBookableDestinations(departureId, places) {
+      const checks = await Promise.all(
+        places.map(function (place) {
+          return isRouteBookable(departureId, place.apiId);
+        })
+      );
+
+      return places.filter(function (_, index) {
+        return checks[index];
+      });
+    }
+
     function makeApiError(stage, message, url, status, originalError) {
       return {
         stage: stage || "unknown",
@@ -745,6 +809,23 @@ function isBookingWidgetVisible() {
         panel.style.opacity = "1";
         panel.style.transform = "translateY(0)";
       });
+
+      scrollPanelIntoView(panel);
+    }
+
+    /*
+     * Geöffnete Liste / Kalender im scrollbaren Modal automatisch ganz sichtbar machen,
+     * damit niemand merken muss, dass man scrollen kann.
+     */
+    function scrollPanelIntoView(panel) {
+      window.setTimeout(function () {
+        if (state.openPanel !== panel || panel.style.display === "none") return;
+
+        const target = panel.querySelector("[data-booking-calendar]") || panel;
+        if (typeof target.scrollIntoView !== "function") return;
+
+        target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 80);
     }
 
     function closePanel(panel, instant) {
@@ -1212,7 +1293,12 @@ function isBookingWidgetVisible() {
             })
           : [];
 
-        state.destinationPlaces = sortPlacesAlphabetically(places);
+        const bookablePlaces = await filterBookableDestinations(
+          state.selectedOrigin.apiId,
+          places
+        );
+
+        state.destinationPlaces = sortPlacesAlphabetically(bookablePlaces);
         state.destinationLoaded = true;
 
         renderDropdownOptions(
@@ -1298,10 +1384,13 @@ if (Array.isArray(payload)) {
       }
     }
 
+    // Nur Daten mit Preis sind buchbar (sonst "not available" in Turnit)
+    const bestOffer = getBookableOffer(item);
+    if (!bestOffer) return;
+
     dates.add(item.date);
 
-    const bestOffer = item.best_offer || null;
-    const price = bestOffer ? bestOffer.price : null;
+    const price = bestOffer.price;
 
     if (price !== null && price !== undefined) {
       prices.set(item.date, formatPriceForCalendar(price));
@@ -2199,6 +2288,7 @@ if (Array.isArray(payload)) {
       apiBaseUrl: "https://data.nightride.com/api",
       bookingBaseUrl: "https://booking.twiliner.com/",
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
+      currency: "CHF",
       apiTimeoutMs: 10000,
       panelTransitionMs: 300,
       selectedTextColor: "#46288c",
@@ -2403,6 +2493,69 @@ if (Array.isArray(payload)) {
         return String(a.label || "").localeCompare(String(b.label || ""), heroState.language, {
           sensitivity: "base"
         });
+      });
+    }
+
+    /*
+     * Buchbarkeit: Route nur anzeigen, wenn mindestens ein Datum ein Angebot mit Preis hat.
+     * Daten ohne Preis zeigt Turnit als "not available" an.
+     */
+    function getBookableOffer(item) {
+      if (!item) return null;
+
+      const offers = [
+        item.best_offer,
+        item.best_offer_with_bed,
+        item.best_offer_private,
+        item.best_offer_with_private_bed
+      ];
+
+      for (let i = 0; i < offers.length; i += 1) {
+        const offer = offers[i];
+        if (offer && offer.price !== null && offer.price !== undefined) {
+          return offer;
+        }
+      }
+
+      return null;
+    }
+
+    const routeBookableCache = new Map();
+
+    async function isRouteBookable(departureId, arrivalId) {
+      const cacheKey = departureId + "|" + arrivalId;
+      if (routeBookableCache.has(cacheKey)) return routeBookableCache.get(cacheKey);
+
+      try {
+        const payload = await apiGet("get-connection-dates", {
+          place_departure_id: departureId,
+          place_arrival_id: arrivalId,
+          operator_id: CONFIG.operatorId,
+          currency: CONFIG.currency
+        }, "route-bookable-check");
+
+        const isBookable = Array.isArray(payload) && payload.some(function (item) {
+          return Boolean(getBookableOffer(item));
+        });
+
+        routeBookableCache.set(cacheKey, isBookable);
+        return isBookable;
+      } catch (error) {
+        // Im Zweifel Route anzeigen, damit ein API-Fehler keine Routen versteckt.
+        console.warn("Twiliner route bookable check failed:", error);
+        return true;
+      }
+    }
+
+    async function filterBookableDestinations(departureId, places) {
+      const checks = await Promise.all(
+        places.map(function (place) {
+          return isRouteBookable(departureId, place.apiId);
+        })
+      );
+
+      return places.filter(function (_, index) {
+        return checks[index];
       });
     }
 
@@ -2840,7 +2993,12 @@ if (Array.isArray(payload)) {
             })
           : [];
 
-        heroState.destinationPlaces = sortPlacesAlphabetically(places);
+        const bookablePlaces = await filterBookableDestinations(
+          heroState.selectedOrigin.apiId,
+          places
+        );
+
+        heroState.destinationPlaces = sortPlacesAlphabetically(bookablePlaces);
         heroState.destinationLoaded = true;
 
         renderHeroOptions(
@@ -3448,6 +3606,7 @@ if (Array.isArray(payload)) {
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
+      currency: "CHF",
       apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
@@ -3635,6 +3794,57 @@ if (Array.isArray(payload)) {
           sensitivity: "base"
         });
       });
+    }
+
+    /*
+     * Buchbarkeit: Route nur anzeigen, wenn mindestens ein Datum ein Angebot mit Preis hat.
+     * Daten ohne Preis zeigt Turnit als "not available" an.
+     */
+    function getBookableOffer(item) {
+      if (!item) return null;
+
+      const offers = [
+        item.best_offer,
+        item.best_offer_with_bed,
+        item.best_offer_private,
+        item.best_offer_with_private_bed
+      ];
+
+      for (let i = 0; i < offers.length; i += 1) {
+        const offer = offers[i];
+        if (offer && offer.price !== null && offer.price !== undefined) {
+          return offer;
+        }
+      }
+
+      return null;
+    }
+
+    const routeBookableCache = new Map();
+
+    async function isRouteBookable(departureId, arrivalId) {
+      const cacheKey = departureId + "|" + arrivalId;
+      if (routeBookableCache.has(cacheKey)) return routeBookableCache.get(cacheKey);
+
+      try {
+        const payload = await apiGet("get-connection-dates", {
+          place_departure_id: departureId,
+          place_arrival_id: arrivalId,
+          operator_id: CONFIG.operatorId,
+          currency: CONFIG.currency
+        }, "route-bookable-check");
+
+        const isBookable = Array.isArray(payload) && payload.some(function (item) {
+          return Boolean(getBookableOffer(item));
+        });
+
+        routeBookableCache.set(cacheKey, isBookable);
+        return isBookable;
+      } catch (error) {
+        // Im Zweifel Route anzeigen, damit ein API-Fehler keine Routen versteckt.
+        console.warn("Twiliner route bookable check failed:", error);
+        return true;
+      }
     }
 
     function makeApiError(stage, message, url, status, originalError) {
@@ -4395,7 +4605,14 @@ if (Array.isArray(payload)) {
               place_departure_id: departurePlace.apiId
             }, "destination-route-arrival-check");
 
-            return isArrivalAvailableForDestination(arrivalPayload) ? departurePlace : null;
+            if (!isArrivalAvailableForDestination(arrivalPayload)) return null;
+
+            const isBookable = await isRouteBookable(
+              departurePlace.apiId,
+              routeState.currentDestinationApiId
+            );
+
+            return isBookable ? departurePlace : null;
           } catch (error) {
             console.warn("Twiliner destination route arrival check failed:", {
               departurePlace,
